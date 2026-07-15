@@ -12,6 +12,8 @@ let shakeX = 0;
 let shakeY = 0;
 let isMuted = false;
 let hitstop = 0; // Detik. Saat > 0, update logika game dibekukan (freeze-frame) untuk impact
+let screenInvertFlash = 0; // Efek flash negatif full screen
+let ultimateShockwave = null; // Status visual shockwave dari ultimate bomb
 const floatingTexts = []; // Teks skor melayang saat musuh dihancurkan
 
 // Penanganan Canvas agar responsif
@@ -65,6 +67,58 @@ function playSound(type) {
             
             osc.start(now);
             osc.stop(now + 0.15);
+        } else if (type === 'laser_heavy') {
+            // Suara Laser Berat (Piercing)
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(300, now);
+            osc.frequency.exponentialRampToValueAtTime(50, now + 0.25);
+            gainNode.gain.setValueAtTime(0.2, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + 0.25);
+        } else if (type === 'missile') {
+            // Suara Luncuran Misil (Whoosh)
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(150, now);
+            osc.frequency.exponentialRampToValueAtTime(600, now + 0.25);
+            gainNode.gain.setValueAtTime(0.12, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + 0.25);
+        } else if (type === 'plasma') {
+            // Suara Plasma Blast
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(600, now);
+            osc.frequency.exponentialRampToValueAtTime(80, now + 0.35);
+            gainNode.gain.setValueAtTime(0.18, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + 0.35);
+        } else if (type === 'ultimate') {
+            // Suara Mega Bomb Shockwave
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(90, now);
+            osc.frequency.linearRampToValueAtTime(10, now + 1.0);
+            gainNode.gain.setValueAtTime(0.5, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 1.0);
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + 1.0);
         } else if (type === 'explosion_small') {
             // Ledakan Musuh Kecil
             const bufferSize = audioCtx.sampleRate * 0.1; // 0.1 detik
@@ -160,7 +214,15 @@ let isMouseActive = false;
 
 window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
-    if (e.code === 'Space') e.preventDefault(); // Cegah scrolling browser
+    if (e.code === 'Space') {
+        e.preventDefault(); // Cegah scrolling browser
+        if (player.hyperCharge >= 100 && gameState === 'PLAY') {
+            triggerUltimate();
+        }
+    }
+    if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyE') && gameState === 'PLAY') {
+        triggerUltimate();
+    }
     isMouseActive = false;
 });
 window.addEventListener('keyup', (e) => {
@@ -269,11 +331,29 @@ function drawBackground() {
     ctx.fillStyle = '#0f2038';
     ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
-    // 2. Gambar Pulau
+    // Grid garis laut modern untuk mensimulasikan gerak maju parallax
+    ctx.strokeStyle = 'rgba(0, 243, 255, 0.03)';
+    ctx.lineWidth = 1;
+    const gridSpacing = 64;
+    const scrollOffset = (stageTimer * 30) % gridSpacing;
+    for (let y = scrollOffset; y < GAME_HEIGHT; y += gridSpacing) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(GAME_WIDTH, y);
+        ctx.stroke();
+    }
+
+    // 2. Gambar Pulau dengan Tebing 3D (sisi bayangan tebing bawah-kanan)
     islands.forEach(island => {
+        // Tebing 3D
+        ctx.fillStyle = '#1b2c15';
+        ctx.beginPath();
+        ctx.arc(island.x + 5, island.y + 7, island.size, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Daratan Pulau
         ctx.fillStyle = island.color;
         ctx.beginPath();
-        // Menggambar bentuk pulau yang tidak teratur menggunakan busur
         ctx.arc(island.x, island.y, island.size, 0, Math.PI * 2);
         ctx.fill();
 
@@ -283,6 +363,17 @@ function drawBackground() {
         ctx.beginPath();
         ctx.arc(island.x, island.y, island.size + 1, 0, Math.PI * 2);
         ctx.stroke();
+    });
+
+    // 2.5 Gambar Bayangan Awan di permukaan (Altitude z=80)
+    clouds.forEach(cloud => {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+        ctx.beginPath();
+        const sOff = 32; // Offset bayangan
+        ctx.arc(cloud.x + sOff, cloud.y + sOff * 1.2, cloud.size * 1.05, 0, Math.PI * 2);
+        ctx.arc(cloud.x + sOff + cloud.size * 0.4, cloud.y + sOff * 1.2 - cloud.size * 0.2, cloud.size * 0.8, 0, Math.PI * 2);
+        ctx.arc(cloud.x + sOff - cloud.size * 0.4, cloud.y + sOff * 1.2 - cloud.size * 0.2, cloud.size * 0.7, 0, Math.PI * 2);
+        ctx.fill();
     });
 
     // 3. Gambar Awan (Parallax)
@@ -297,8 +388,140 @@ function drawBackground() {
 }
 
 
+// --- SISTEM BAYANGAN 3D ELEVASI (ALTITUDE SHADOWS) ---
+function drawEntityShadows() {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+    
+    // 1. Bayangan Pemain (Ketinggian z=35)
+    if (gameState === 'PLAY' && !(player.invincible > 0 && Math.floor(player.invincible * 20) % 2 === 0)) {
+        ctx.save();
+        const pz = 35;
+        ctx.translate(player.x + pz * 0.35, player.y + pz * 0.45);
+        if (player.rollAngle) {
+            ctx.scale(Math.cos(player.rollAngle), 1);
+            ctx.rotate(player.rollAngle * 0.25);
+        }
+        
+        // Sayap F-22
+        ctx.beginPath();
+        ctx.moveTo(0, -6);
+        ctx.lineTo(-28, 5);
+        ctx.lineTo(-24, 11);
+        ctx.lineTo(-8, 5);
+        ctx.lineTo(8, 5);
+        ctx.lineTo(24, 11);
+        ctx.lineTo(28, 5);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Twin tail fins F-22
+        ctx.beginPath();
+        ctx.moveTo(-5, 12); ctx.lineTo(-15, 23); ctx.lineTo(-11, 25); ctx.lineTo(-2, 15);
+        ctx.closePath(); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(5, 12); ctx.lineTo(14, 23); ctx.lineTo(10, 25); ctx.lineTo(2, 15);
+        ctx.closePath(); ctx.fill();
+
+        // Badan F-22
+        ctx.beginPath();
+        ctx.moveTo(0, -28);
+        ctx.lineTo(5, -17);
+        ctx.lineTo(6, 18);
+        ctx.lineTo(-6, 18);
+        ctx.lineTo(-5, -17);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+    
+    // 2. Bayangan Musuh
+    enemies.forEach(e => {
+        ctx.save();
+        let ez = 25;
+        if (e.type === 'medium') ez = 30;
+        if (e.type === 'boss') ez = 50;
+        
+        ctx.translate(e.x + ez * 0.35, e.y + ez * 0.45);
+        if (e.rollAngle) {
+            ctx.scale(Math.cos(e.rollAngle), 1);
+            ctx.rotate(e.rollAngle * 0.25);
+        }
+        
+        if (e.type === 'small') {
+            // Bayangan Stealth Drone
+            ctx.beginPath();
+            ctx.moveTo(0, -12);
+            ctx.lineTo(-18, 4);
+            ctx.lineTo(-12, 8);
+            ctx.lineTo(0, 2);
+            ctx.lineTo(12, 8);
+            ctx.lineTo(18, 4);
+            ctx.closePath();
+            ctx.fill();
+        } else if (e.type === 'medium') {
+            // Bayangan Jet Tempur Su-57
+            // Sayap
+            ctx.beginPath();
+            ctx.moveTo(0, -10);
+            ctx.lineTo(-28, -2);
+            ctx.lineTo(-22, 6);
+            ctx.lineTo(-8, 2);
+            ctx.lineTo(8, 2);
+            ctx.lineTo(22, 6);
+            ctx.lineTo(28, -2);
+            ctx.closePath();
+            ctx.fill();
+            // Badan
+            ctx.beginPath();
+            ctx.moveTo(0, -22);
+            ctx.lineTo(5, -12);
+            ctx.lineTo(6, 14);
+            ctx.lineTo(-6, 14);
+            ctx.lineTo(-5, -12);
+            ctx.closePath();
+            ctx.fill();
+        } else if (e.type === 'boss') {
+            // Bayangan Pembom B-2 Spirit
+            ctx.beginPath();
+            ctx.moveTo(0, -42);
+            ctx.lineTo(-65, -10);
+            ctx.lineTo(-45, 12);
+            ctx.lineTo(-30, 2);
+            ctx.lineTo(0, 16);
+            ctx.lineTo(30, 2);
+            ctx.lineTo(45, 12);
+            ctx.lineTo(65, -10);
+            ctx.closePath();
+            ctx.fill();
+        }
+        ctx.restore();
+    });
+    
+    // 3. Bayangan Peluru
+    bullets.forEach(b => {
+        if (b.type === 'laser') return;
+        const bz = b.isPlayerOwned ? 15 : 12;
+        ctx.fillRect(b.x - b.width / 2 + bz * 0.35, b.y - b.height / 2 + bz * 0.45, b.width, b.height);
+    });
+    
+    // 4. Bayangan Item Powerup (z=8)
+    powerUps.forEach(p => {
+        ctx.save();
+        const pz = 8;
+        ctx.translate(p.x + pz * 0.35, p.y + pz * 0.45);
+        ctx.rotate(p.angle);
+        ctx.fillRect(-p.width / 2, -p.height / 2, p.width, p.height);
+        ctx.restore();
+    });
+    
+    ctx.restore();
+}
+
+
 // --- PARTICLE SYSTEM ---
 const particles = [];
+const vaporTrails = [];
 
 function spawnExplosion(x, y, color, count = 15, baseSize = 3) {
     for (let i = 0; i < count; i++) {
@@ -339,6 +562,29 @@ function drawParticles() {
         ctx.fill();
         ctx.restore();
     });
+}
+
+function updateVaporTrails(dt) {
+    for (let i = vaporTrails.length - 1; i >= 0; i--) {
+        const vt = vaporTrails[i];
+        vt.alpha -= vt.decay * dt * 60;
+        if (vt.alpha <= 0) {
+            vaporTrails.splice(i, 1);
+        }
+    }
+}
+
+function drawVaporTrails() {
+    ctx.save();
+    vaporTrails.forEach(vt => {
+        ctx.fillStyle = `rgba(240, 248, 255, ${vt.alpha})`;
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.35)';
+        ctx.shadowBlur = vt.size * 2;
+        ctx.beginPath();
+        ctx.arc(vt.x, vt.y, vt.size, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    ctx.restore();
 }
 
 
@@ -400,6 +646,12 @@ const player = {
     maxHealth: 100,
     shield: 0, // Nilai 0 sampai 100
     weaponLevel: 1, // 1: Tembak 1, 2: Tembak 2, 3: Tembak 3
+    weaponType: 'spread', // 'spread', 'laser', 'missile', 'plasma'
+    hyperCharge: 0, // 0 - 100
+    comboCount: 0,
+    comboTimer: 0,
+    rollAngle: 0,
+    targetRoll: 0,
     fireCooldown: 0,
     fireRate: 0.18, // Detik per tembakan
     propellerAngle: 0,
@@ -424,10 +676,29 @@ const player = {
             const length = Math.sqrt(dx * dx + dy * dy);
             this.x += (dx / length) * this.speed * dt * 60;
             this.y += (dy / length) * this.speed * dt * 60;
+            this.targetRoll = dx * 0.45;
         } else if (isMouseActive) {
             // Ikuti mouse secara halus (lerp)
+            const prevX = this.x;
             this.x += (mouseX - this.x) * 0.25;
             this.y += (mouseY - this.y) * 0.25;
+            
+            // Hitung target kemiringan berdasarkan kecepatan pergeseran mouse
+            const diffX = mouseX - prevX;
+            this.targetRoll = Math.max(-0.45, Math.min(0.45, diffX * 0.08));
+        } else {
+            this.targetRoll = 0;
+        }
+        
+        // Interpolasi kemiringan secara halus
+        this.rollAngle += (this.targetRoll - this.rollAngle) * 0.18 * dt * 60;
+        
+        // Update Combo Timer
+        if (this.comboTimer > 0) {
+            this.comboTimer -= dt;
+            if (this.comboTimer <= 0) {
+                this.comboCount = 0;
+            }
         }
         
         // Batasi gerakan di dalam canvas
@@ -452,22 +723,112 @@ const player = {
             this.fire();
             this.fireCooldown = this.fireRate;
         }
+
+        // 1. Spawning Vapor Trails (di ujung sayap saat rollAngle tajam)
+        if (Math.abs(this.rollAngle) > 0.08) {
+            const cosR = Math.cos(this.rollAngle);
+            const sinRot = Math.sin(this.rollAngle * 0.25);
+            const cosRot = Math.cos(this.rollAngle * 0.25);
+            
+            // Ujung sayap kiri (lx = -28)
+            const leftX = this.x + (-28) * cosR * cosRot;
+            const leftY = this.y + (-28) * cosR * sinRot;
+            
+            // Ujung sayap kanan (lx = 28)
+            const rightX = this.x + 28 * cosR * cosRot;
+            const rightY = this.y + 28 * cosR * sinRot;
+            
+            vaporTrails.push({ x: leftX, y: leftY, alpha: 0.55, decay: 0.025, size: 2.2 });
+            vaporTrails.push({ x: rightX, y: rightY, alpha: 0.55, decay: 0.025, size: 2.2 });
+        }
+        
+        // 2. Spawning Engine Exhaust Heat haze particles
+        if (Math.random() < 0.45) {
+            let thrustY = 1.0;
+            if (keys['KeyW'] || keys['ArrowUp']) thrustY = 1.6;
+            else if (keys['KeyS'] || keys['ArrowDown']) thrustY = 0.55;
+            
+            const cosR = Math.cos(this.rollAngle);
+            const sinRot = Math.sin(this.rollAngle * 0.25);
+            const cosRot = Math.cos(this.rollAngle * 0.25);
+            
+            [-4, 4].forEach(lx => {
+                const ly = 18;
+                const px = lx * cosR;
+                const py = ly;
+                const worldX = this.x + px * cosRot - py * sinRot;
+                const worldY = this.y + px * sinRot + py * cosRot;
+                
+                particles.push({
+                    x: worldX,
+                    y: worldY,
+                    vx: (Math.random() - 0.5) * 0.8,
+                    vy: 3 + Math.random() * 2 * thrustY,
+                    size: Math.random() * 3 + 2,
+                    color: Math.random() < 0.3 ? '#00f3ff' : (Math.random() < 0.7 ? '#ff7b00' : 'rgba(255, 255, 255, 0.1)'),
+                    alpha: 0.5,
+                    decay: 0.08 + Math.random() * 0.04
+                });
+            });
+        }
     },
     
     fire() {
-        playSound('laser');
-        if (this.weaponLevel === 1) {
-            // 1 peluru lurus dari tengah moncong
-            bullets.push(new Bullet(this.x, this.y - 25, 0, -10, true));
-        } else if (this.weaponLevel === 2) {
-            // 2 peluru dari kiri & kanan sayap
-            bullets.push(new Bullet(this.x - 18, this.y - 10, 0, -10, true));
-            bullets.push(new Bullet(this.x + 18, this.y - 10, 0, -10, true));
-        } else {
-            // 3 peluru: 1 lurus, 2 miring ke samping
-            bullets.push(new Bullet(this.x, this.y - 25, 0, -10, true));
-            bullets.push(new Bullet(this.x - 18, this.y - 10, -2, -10, true));
-            bullets.push(new Bullet(this.x + 18, this.y - 10, 2, -10, true));
+        if (this.weaponType === 'spread') {
+            playSound('laser');
+            if (this.weaponLevel === 1) {
+                bullets.push(new Bullet(this.x, this.y - 25, 0, -10, true, 'spread'));
+            } else if (this.weaponLevel === 2) {
+                bullets.push(new Bullet(this.x - 12, this.y - 15, -1.2, -10, true, 'spread'));
+                bullets.push(new Bullet(this.x + 12, this.y - 15, 1.2, -10, true, 'spread'));
+            } else {
+                bullets.push(new Bullet(this.x, this.y - 25, 0, -10, true, 'spread'));
+                bullets.push(new Bullet(this.x - 18, this.y - 10, -2, -10, true, 'spread'));
+                bullets.push(new Bullet(this.x + 18, this.y - 10, 2, -10, true, 'spread'));
+                bullets.push(new Bullet(this.x - 30, this.y - 5, -3.5, -9, true, 'spread'));
+                bullets.push(new Bullet(this.x + 30, this.y - 5, 3.5, -9, true, 'spread'));
+            }
+        } else if (this.weaponType === 'laser') {
+            playSound('laser_heavy');
+            if (this.weaponLevel === 1) {
+                bullets.push(new Bullet(this.x, this.y - 25, 0, -14, true, 'laser', 15));
+            } else if (this.weaponLevel === 2) {
+                bullets.push(new Bullet(this.x - 16, this.y - 15, 0, -15, true, 'laser', 12));
+                bullets.push(new Bullet(this.x + 16, this.y - 15, 0, -15, true, 'laser', 12));
+            } else {
+                bullets.push(new Bullet(this.x, this.y - 25, 0, -16, true, 'laser', 15));
+                bullets.push(new Bullet(this.x - 20, this.y - 15, 0, -16, true, 'laser', 11));
+                bullets.push(new Bullet(this.x + 20, this.y - 15, 0, -16, true, 'laser', 11));
+            }
+        } else if (this.weaponType === 'missile') {
+            playSound('missile');
+            if (this.weaponLevel === 1) {
+                bullets.push(new Bullet(this.x - 18, this.y - 10, -2, -4, true, 'missile', 12));
+                bullets.push(new Bullet(this.x + 18, this.y - 10, 2, -4, true, 'missile', 12));
+            } else if (this.weaponLevel === 2) {
+                bullets.push(new Bullet(this.x - 20, this.y - 10, -3, -3, true, 'missile', 12));
+                bullets.push(new Bullet(this.x + 20, this.y - 10, 3, -3, true, 'missile', 12));
+                bullets.push(new Bullet(this.x - 10, this.y - 15, -1, -5, true, 'missile', 12));
+                bullets.push(new Bullet(this.x + 10, this.y - 15, 1, -5, true, 'missile', 12));
+            } else {
+                bullets.push(new Bullet(this.x - 24, this.y, -4, -2, true, 'missile', 12));
+                bullets.push(new Bullet(this.x + 24, this.y, 4, -2, true, 'missile', 12));
+                bullets.push(new Bullet(this.x - 16, this.y - 10, -2, -4, true, 'missile', 12));
+                bullets.push(new Bullet(this.x + 16, this.y - 10, 2, -4, true, 'missile', 12));
+                bullets.push(new Bullet(this.x - 8, this.y - 20, -0.5, -6, true, 'missile', 12));
+                bullets.push(new Bullet(this.x + 8, this.y - 20, 0.5, -6, true, 'missile', 12));
+            }
+        } else if (this.weaponType === 'plasma') {
+            playSound('plasma');
+            if (this.weaponLevel === 1) {
+                bullets.push(new Bullet(this.x, this.y - 25, 0, -6, true, 'plasma', 25, 70));
+            } else if (this.weaponLevel === 2) {
+                bullets.push(new Bullet(this.x, this.y - 25, 0, -6.5, true, 'plasma', 45, 100));
+            } else {
+                bullets.push(new Bullet(this.x, this.y - 25, 0, -7, true, 'plasma', 40, 80));
+                bullets.push(new Bullet(this.x - 22, this.y - 10, -1.2, -6, true, 'plasma', 25, 60));
+                bullets.push(new Bullet(this.x + 22, this.y - 10, 1.2, -6, true, 'plasma', 25, 60));
+            }
         }
     },
     
@@ -480,91 +841,114 @@ const player = {
         ctx.save();
         ctx.translate(this.x, this.y);
         
+        if (this.rollAngle) {
+            ctx.scale(Math.cos(this.rollAngle), 1);
+            ctx.rotate(this.rollAngle * 0.25);
+        }
+        
         // Flash putih singkat saat baru kena damage
         const isFlashing = this.hitFlashTimer > 0;
         if (isFlashing) {
             ctx.filter = 'brightness(3) saturate(0.3)';
         }
         
-        // Efek Engine Thruster (api pendorong)
-        const flameHeight = 10 + Math.random() * 15;
-        const grad = ctx.createLinearGradient(0, 20, 0, 20 + flameHeight);
-        grad.addColorStop(0, '#ffd700');
-        grad.addColorStop(0.5, '#ff4500');
-        grad.addColorStop(1, 'transparent');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(-6, 20);
-        ctx.lineTo(0, 20 + flameHeight);
-        ctx.lineTo(6, 20);
-        ctx.closePath();
-        ctx.fill();
+        // 1. Api Afterburner Jet Kembar
+        let thrustY = 1.0;
+        if (keys['KeyW'] || keys['ArrowUp']) thrustY = 1.6;
+        else if (keys['KeyS'] || keys['ArrowDown']) thrustY = 0.55;
+        
+        const flameHeight = (12 + Math.random() * 16) * thrustY;
+        
+        [-4, 4].forEach(ex => {
+            const flameGrad = ctx.createLinearGradient(ex, 18, ex, 18 + flameHeight);
+            flameGrad.addColorStop(0, '#00f3ff'); // Biru neon di pangkal
+            flameGrad.addColorStop(0.3, '#ffaa00'); // Kuning oranye
+            flameGrad.addColorStop(1, 'transparent');
+            
+            ctx.fillStyle = flameGrad;
+            ctx.beginPath();
+            ctx.moveTo(ex - 3.5, 18);
+            ctx.lineTo(ex, 18 + flameHeight);
+            ctx.lineTo(ex + 3.5, 18);
+            ctx.closePath();
+            ctx.fill();
+        });
 
-        // 1. Sayap Utama (Warna Logam Pesawat Tempur)
-        ctx.fillStyle = '#a6b0c3';
+        // 2. Sayap Utama (Delta wing stealth - F-22 Raptor)
+        let wingGrad = ctx.createLinearGradient(-28, 0, 28, 0);
+        wingGrad.addColorStop(0, '#4a545e');
+        wingGrad.addColorStop(0.5, '#7b8a99');
+        wingGrad.addColorStop(1, '#4a545e');
+        ctx.fillStyle = wingGrad;
+        
         ctx.beginPath();
-        ctx.moveTo(-25, 0);
-        ctx.lineTo(25, 0);
-        ctx.lineTo(20, 8);
-        ctx.lineTo(-20, 8);
+        ctx.moveTo(0, -6);
+        ctx.lineTo(-28, 5);
+        ctx.lineTo(-24, 11);
+        ctx.lineTo(-8, 5);
+        ctx.lineTo(8, 5);
+        ctx.lineTo(24, 11);
+        ctx.lineTo(28, 5);
         ctx.closePath();
         ctx.fill();
         
-        // Garis merah hiasan sayap
-        ctx.fillStyle = '#ff0055';
-        ctx.fillRect(-23, 1, 6, 2);
-        ctx.fillRect(17, 1, 6, 2);
-
-        // 2. Badan Utama
-        ctx.fillStyle = '#7e8a9f';
+        // Hiasan Specular Glare pada Sayap
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(0, -25);
-        ctx.lineTo(8, -12);
-        ctx.lineTo(8, 20);
-        ctx.lineTo(-8, 20);
-        ctx.lineTo(-8, -12);
+        ctx.moveTo(-25, 6);
+        ctx.lineTo(25, 6);
+        ctx.stroke();
+
+        // 3. Twin Stabilizers (Ekor Kembar)
+        ctx.fillStyle = '#39424c';
+        ctx.beginPath();
+        ctx.moveTo(-5, 12);
+        ctx.lineTo(-15, 23);
+        ctx.lineTo(-11, 25);
+        ctx.lineTo(-2, 15);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.moveTo(5, 12);
+        ctx.lineTo(14, 23);
+        ctx.lineTo(10, 25);
+        ctx.lineTo(2, 15);
         ctx.closePath();
         ctx.fill();
 
-        // 3. Ekor/Sayap Belakang
-        ctx.fillStyle = '#68758b';
+        // 4. Badan Utama Jet
+        let bodyGrad = ctx.createLinearGradient(-6, 0, 6, 0);
+        bodyGrad.addColorStop(0, '#3f4954');
+        bodyGrad.addColorStop(0.5, '#687787');
+        bodyGrad.addColorStop(1, '#3f4954');
+        ctx.fillStyle = bodyGrad;
+        
         ctx.beginPath();
-        ctx.moveTo(-10, 16);
-        ctx.lineTo(10, 16);
-        ctx.lineTo(8, 22);
-        ctx.lineTo(-8, 22);
+        ctx.moveTo(0, -28);
+        ctx.lineTo(5, -17);
+        ctx.lineTo(6, 18);
+        ctx.lineTo(-6, 18);
+        ctx.lineTo(-5, -17);
         ctx.closePath();
         ctx.fill();
 
-        // 4. Kaca Kokpit (Biru Glass)
-        ctx.fillStyle = '#00f3ff';
+        // 5. Specular Canopy / Kaca Kokpit Emas/Biru reflektif
+        let copGrad = ctx.createLinearGradient(0, -14, 0, 4);
+        copGrad.addColorStop(0, '#00e5ff');
+        copGrad.addColorStop(0.4, '#0077ff');
+        copGrad.addColorStop(1, '#001133');
+        ctx.fillStyle = copGrad;
         ctx.beginPath();
-        ctx.ellipse(0, -5, 4, 10, 0, 0, Math.PI * 2);
+        ctx.ellipse(0, -5, 3.5, 9, 0, 0, Math.PI * 2);
         ctx.fill();
         
         // Kilauan Kokpit
         ctx.fillStyle = '#ffffff';
         ctx.beginPath();
-        ctx.ellipse(-1, -7, 1.5, 5, -0.2, 0, Math.PI * 2);
+        ctx.ellipse(-1, -7, 1.2, 4.5, -0.15, 0, Math.PI * 2);
         ctx.fill();
-
-        // 5. Baling-Baling (Propeller)
-        ctx.save();
-        ctx.translate(0, -25);
-        ctx.rotate(this.propellerAngle);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-15, 0);
-        ctx.lineTo(15, 0);
-        ctx.stroke();
-        
-        // Pemutar Baling-Baling Tengah
-        ctx.fillStyle = '#ffcc00';
-        ctx.beginPath();
-        ctx.arc(0, 0, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
         
         // 6. Efek Shield jika aktif
         if (this.shield > 0) {
@@ -623,18 +1007,98 @@ const player = {
 
 // 2. PELURU (BULLETS)
 class Bullet {
-    constructor(x, y, vx, vy, isPlayerOwned) {
+    constructor(x, y, vx, vy, isPlayerOwned, type, damage, splashRadius) {
         this.x = x;
         this.y = y;
         this.vx = vx;
         this.vy = vy;
         this.isPlayerOwned = isPlayerOwned;
-        this.width = isPlayerOwned ? 4 : 6;
-        this.height = isPlayerOwned ? 15 : 12;
-        this.color = isPlayerOwned ? '#00f3ff' : '#ff0055';
+        this.type = type || 'normal';
+        this.damage = damage || 10;
+        this.splashRadius = splashRadius || (this.type === 'plasma' ? 70 : 0);
+        this.target = null; // Target pelacakan untuk homing missile
+        
+        // Tentukan ukuran dan warna berdasarkan tipe
+        if (!isPlayerOwned) {
+            this.width = 6;
+            this.height = 12;
+            this.color = '#ff0055'; // Peluru musuh selalu merah berpendar
+        } else {
+            if (this.type === 'spread') {
+                this.width = 5;
+                this.height = 14;
+                this.color = '#00f3ff'; // Biru cyan
+            } else if (this.type === 'laser') {
+                this.width = 7;
+                this.height = 36; // Laser bolt memanjang
+                this.color = '#ff0055'; // Merah neon
+            } else if (this.type === 'missile') {
+                this.width = 8;
+                this.height = 18;
+                this.color = '#39ff14'; // Hijau neon
+            } else if (this.type === 'plasma') {
+                this.width = 16;
+                this.height = 16;
+                this.color = '#b026ff'; // Ungu neon
+            } else {
+                this.width = 4;
+                this.height = 15;
+                this.color = '#00f3ff';
+            }
+        }
     }
     
     update(dt) {
+        // Homing missile logic
+        if (this.isPlayerOwned && this.type === 'missile') {
+            if (!this.target || this.target.health <= 0 || this.target.y > GAME_HEIGHT) {
+                // Cari musuh terdekat di layar
+                let nearest = null;
+                let minDist = 999999;
+                enemies.forEach(e => {
+                    if (e.y > -20 && e.y < GAME_HEIGHT) {
+                        const dist = Math.hypot(e.x - this.x, e.y - this.y);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearest = e;
+                        }
+                    }
+                });
+                this.target = nearest;
+            }
+            
+            if (this.target) {
+                // Arahkan rudal menuju target secara halus
+                const targetAngle = Math.atan2(this.target.y - this.y, this.target.x - this.x);
+                let currentAngle = Math.atan2(this.vy, this.vx);
+                
+                let angleDiff = targetAngle - currentAngle;
+                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                
+                const turnSpeed = 0.12 * dt * 60; // turn rate per frame
+                currentAngle += Math.max(-turnSpeed, Math.min(turnSpeed, angleDiff));
+                
+                const speed = 10; // kecepatan gerak rudal
+                this.vx = Math.cos(currentAngle) * speed;
+                this.vy = Math.sin(currentAngle) * speed;
+            }
+            
+            // Efek asap ekor rudal
+            if (Math.random() < 0.35) {
+                particles.push({
+                    x: this.x - this.vx * 1.2,
+                    y: this.y - this.vy * 1.2,
+                    vx: -this.vx * 0.1 + (Math.random() - 0.5) * 0.4,
+                    vy: -this.vy * 0.1 + (Math.random() - 0.5) * 0.4,
+                    size: Math.random() * 2.5 + 1.5,
+                    color: 'rgba(150, 150, 150, 0.4)',
+                    alpha: 0.7,
+                    decay: 0.035
+                });
+            }
+        }
+        
         this.x += this.vx * dt * 60;
         this.y += this.vy * dt * 60;
     }
@@ -642,10 +1106,58 @@ class Bullet {
     draw() {
         ctx.save();
         
-        // Trail/jejak peluru memanjang ke arah belakang gerakan
+        if (this.isPlayerOwned && this.type === 'plasma') {
+            // Gambar bola plasma ungu berpendar
+            ctx.shadowColor = this.color;
+            ctx.shadowBlur = 12;
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.width / 2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Inti putih
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.width / 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+            return;
+        }
+        
+        if (this.isPlayerOwned && this.type === 'missile') {
+            // Gambar tubuh rudal mini
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            const angle = Math.atan2(this.vy, this.vx) + Math.PI / 2;
+            ctx.rotate(angle);
+            
+            // Body hijau
+            ctx.fillStyle = '#39ff14';
+            ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+            
+            // Moncong merah
+            ctx.fillStyle = '#ff0055';
+            ctx.beginPath();
+            ctx.moveTo(-this.width / 2, -this.height / 2);
+            ctx.lineTo(0, -this.height / 2 - 5);
+            ctx.lineTo(this.width / 2, -this.height / 2);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Sirip
+            ctx.fillStyle = '#155e0d';
+            ctx.fillRect(-this.width / 2 - 2, this.height / 2 - 3, 2, 3);
+            ctx.fillRect(this.width / 2, this.height / 2 - 3, 2, 3);
+            
+            ctx.restore();
+            ctx.restore();
+            return;
+        }
+
+        // Tembakan biasa (Spread, Laser, Normal)
         const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
         if (speed > 0.1) {
-            const trailLen = Math.min(20, speed * 1.8);
+            const trailLen = Math.min(this.type === 'laser' ? 35 : 20, speed * 1.8);
             const tx = -this.vx / speed * trailLen;
             const ty = -this.vy / speed * trailLen;
             const grad = ctx.createLinearGradient(this.x, this.y, this.x + tx, this.y + ty);
@@ -663,9 +1175,8 @@ class Bullet {
         }
         
         ctx.fillStyle = this.color;
-        // Berikan efek bayangan menyala
         ctx.shadowColor = this.color;
-        ctx.shadowBlur = 8;
+        ctx.shadowBlur = this.type === 'laser' ? 12 : 8;
         ctx.fillRect(this.x - this.width / 2, this.y - this.height / 2, this.width, this.height);
         ctx.restore();
     }
@@ -686,6 +1197,7 @@ class Enemy {
         this.height = 40;
         this.fireCooldown = 1 + Math.random() * 2;
         this.hitFlash = 0; // Timer kedip putih saat kena damage
+        this.rollAngle = 0; // Sudut kemiringan 3D
         
         // Mengatur atribut berdasarkan tipe & kesulitan
         const diffMultiplier = difficulty === 'easy' ? 0.75 : (difficulty === 'hard' ? 1.5 : 1);
@@ -697,6 +1209,10 @@ class Enemy {
             this.maxHealth = this.health;
             this.speed = (2.5 + Math.random() * 2) * (difficulty === 'hard' ? 1.2 : 1);
             this.points = 100;
+            // Parameter gerakan meliuk 3D
+            this.driftSpeed = 0.4 + Math.random() * 1.0;
+            this.driftFreq = 0.02 + Math.random() * 0.02;
+            this.driftOffset = Math.random() * Math.PI * 2;
         } else if (type === 'medium') {
             this.width = 56;
             this.height = 56;
@@ -730,17 +1246,28 @@ class Enemy {
         if (this.hitFlash > 0) this.hitFlash -= dt;
         
         if (this.type === 'small') {
-            // Terbang lurus ke bawah
+            // Terbang berliuk ke bawah
             this.y += this.speed * dt * 60;
+            const driftAngle = this.driftOffset + this.y * this.driftFreq;
+            this.x += Math.sin(driftAngle) * this.driftSpeed * dt * 60;
+            this.rollAngle = Math.cos(driftAngle) * 0.25;
         } else if (this.type === 'medium') {
             // Bergerak sinusoidal/gelombang
             this.y += this.speed * dt * 60;
             this.angle += this.waveFrequency * dt * 60;
             this.x = this.centerX + Math.sin(this.angle) * this.waveAmplitude * 10;
+            this.rollAngle = Math.cos(this.angle) * 0.35;
+            
+            // Efek vapor trail sayap saat membelok
+            if (Math.abs(this.rollAngle) > 0.12 && Math.random() < 0.3) {
+                vaporTrails.push({ x: this.x - 28, y: this.y, alpha: 0.45, decay: 0.03, size: 1.8 });
+                vaporTrails.push({ x: this.x + 28, y: this.y, alpha: 0.45, decay: 0.03, size: 1.8 });
+            }
         } else if (this.type === 'boss') {
             // Turun sampai posisi tertentu, lalu bolak-balik horizontal
             if (this.y < 120) {
                 this.y += this.speed * dt * 60;
+                this.rollAngle = 0;
             } else {
                 this.x += this.speed * this.direction * dt * 60 * 1.5;
                 if (this.x < 80) {
@@ -749,6 +1276,13 @@ class Enemy {
                 } else if (this.x > GAME_WIDTH - 80) {
                     this.x = GAME_WIDTH - 80;
                     this.direction = -1;
+                }
+                this.rollAngle = this.direction * 0.15;
+                
+                // Efek vapor trail sayap boss saat berbelok horizontal
+                if (Math.random() < 0.2) {
+                    vaporTrails.push({ x: this.x - 65, y: this.y, alpha: 0.4, decay: 0.02, size: 2.4 });
+                    vaporTrails.push({ x: this.x + 65, y: this.y, alpha: 0.4, decay: 0.02, size: 2.4 });
                 }
             }
         }
@@ -798,116 +1332,150 @@ class Enemy {
         ctx.save();
         ctx.translate(this.x, this.y);
         
+        if (this.rollAngle) {
+            ctx.scale(Math.cos(this.rollAngle), 1);
+            ctx.rotate(this.rollAngle * 0.25);
+        }
+        
         // Flash putih saat kena damage
         if (this.hitFlash > 0) {
             ctx.filter = 'brightness(2.5) saturate(0.4)';
         }
         
         if (this.type === 'small') {
-            // --- Gambar Pesawat Tempur Kecil (Warna Hijau Militer/Abu Gelap) ---
-            ctx.fillStyle = '#4c6444';
+            // --- Gambar Stealth Delta Drone ---
+            ctx.fillStyle = '#2d3748'; // Abu-abu gelap
             
-            // Sayap
+            // Sayap Delta Tajam
             ctx.beginPath();
-            ctx.moveTo(-18, -4);
-            ctx.lineTo(18, -4);
-            ctx.lineTo(15, 2);
-            ctx.lineTo(-15, 2);
-            ctx.closePath();
-            ctx.fill();
-
-            // Badan
-            ctx.fillStyle = '#394d33';
-            ctx.beginPath();
-            ctx.moveTo(0, 18);
-            ctx.lineTo(6, -10);
-            ctx.lineTo(-6, -10);
+            ctx.moveTo(0, -12);
+            ctx.lineTo(-18, 4);
+            ctx.lineTo(-12, 8);
+            ctx.lineTo(0, 2);
+            ctx.lineTo(12, 8);
+            ctx.lineTo(18, 4);
             ctx.closePath();
             ctx.fill();
             
-            // Kokpit
-            ctx.fillStyle = '#ff6600';
+            // Sensor mata merah neon (optik drone)
+            ctx.fillStyle = '#ff003c';
+            ctx.shadowColor = '#ff003c';
+            ctx.shadowBlur = 6;
             ctx.beginPath();
-            ctx.arc(0, -2, 3, 0, Math.PI * 2);
+            ctx.arc(0, -4, 2.2, 0, Math.PI * 2);
             ctx.fill();
+            ctx.shadowBlur = 0; // Reset pendaran
 
             // Health bar (hanya saat terluka)
             this.drawHealthBar();
 
         } else if (this.type === 'medium') {
-            // --- Gambar Bomber Sedang (Warna Abu Baja dengan Aksen Jingga) ---
-            ctx.fillStyle = '#5c6b73';
-            
-            // Sayap Lebar
+            // --- Gambar Jet Tempur Modern Bermesin Ganda (Su-57 Style) ---
+            // Sayap Utama
+            let mGrad = ctx.createLinearGradient(-28, 0, 28, 0);
+            mGrad.addColorStop(0, '#334155');
+            mGrad.addColorStop(0.5, '#475569');
+            mGrad.addColorStop(1, '#334155');
+            ctx.fillStyle = mGrad;
             ctx.beginPath();
-            ctx.moveTo(-28, -8);
-            ctx.lineTo(28, -8);
-            ctx.lineTo(24, 0);
-            ctx.lineTo(-24, 0);
+            ctx.moveTo(0, -10);
+            ctx.lineTo(-28, -2);
+            ctx.lineTo(-22, 6);
+            ctx.lineTo(-8, 2);
+            ctx.lineTo(8, 2);
+            ctx.lineTo(22, 6);
+            ctx.lineTo(28, -2);
             ctx.closePath();
             ctx.fill();
-            
-            // Mesin Kiri & Kanan di Sayap
-            ctx.fillStyle = '#ff7b00';
-            ctx.fillRect(-16, -12, 6, 12);
-            ctx.fillRect(10, -12, 6, 12);
 
-            // Badan
-            ctx.fillStyle = '#3d4a50';
+            // Kilauan Specular pada Sayap
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+            ctx.lineWidth = 1;
             ctx.beginPath();
-            ctx.moveTo(0, 24);
-            ctx.lineTo(10, -18);
-            ctx.lineTo(-10, -18);
+            ctx.moveTo(-25, 0);
+            ctx.lineTo(25, 0);
+            ctx.stroke();
+
+            // Lubang Mesin Jet Kembar di Belakang
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(-8, 12, 4, 6);
+            ctx.fillRect(4, 12, 4, 6);
+            // Efek Api Afterburner Jingga Kecil
+            const eHt = 6 + Math.random() * 8;
+            ctx.fillStyle = '#ff7b00';
+            ctx.fillRect(-7.5, 18, 3, eHt);
+            ctx.fillRect(4.5, 18, 3, eHt);
+
+            // Badan Utama Jet
+            ctx.fillStyle = '#1e293b';
+            ctx.beginPath();
+            ctx.moveTo(0, -22);
+            ctx.lineTo(5, -12);
+            ctx.lineTo(6, 14);
+            ctx.lineTo(-6, 14);
+            ctx.lineTo(-5, -12);
             ctx.closePath();
             ctx.fill();
             
-            // Kokpit Oranye
-            ctx.fillStyle = '#ffaa00';
+            // Kokpit Oranye Reflektif
+            ctx.fillStyle = '#f97316';
             ctx.beginPath();
-            ctx.ellipse(0, -6, 4, 8, 0, 0, Math.PI * 2);
+            ctx.ellipse(0, -6, 3, 7, 0, 0, Math.PI * 2);
             ctx.fill();
+            
+            // Rudal Merah di Ujung Sayap
+            ctx.fillStyle = '#ef4444';
+            ctx.fillRect(-28, -4, 2, 8);
+            ctx.fillRect(26, -4, 2, 8);
             
             // Health bar (hanya saat terluka)
             this.drawHealthBar();
             
         } else if (this.type === 'boss') {
-            // --- Gambar Pembom Raksasa (Boss Pesawat) ---
-            ctx.fillStyle = '#2b2d42';
+            // --- Gambar Sayap Terbang Raksasa Siluman (B-2 Spirit Style) ---
+            let bGrad = ctx.createLinearGradient(-60, 0, 60, 0);
+            bGrad.addColorStop(0, '#0f172a'); // Hitam karbon
+            bGrad.addColorStop(0.5, '#1e293b'); // Abu-abu gelap metalik
+            bGrad.addColorStop(1, '#0f172a');
+            ctx.fillStyle = bGrad;
             
-            // Sayap Raksasa
             ctx.beginPath();
-            ctx.moveTo(-60, -15);
-            ctx.lineTo(60, -15);
-            ctx.lineTo(50, 5);
-            ctx.lineTo(-50, 5);
+            ctx.moveTo(0, -42); // Moncong hidung depan siluman
+            ctx.lineTo(-65, -10); // Sayap kiri luar
+            ctx.lineTo(-45, 12); // Bagian belakang bergerigi
+            ctx.lineTo(-30, 2);
+            ctx.lineTo(0, 16); // Bagian ekor tengah
+            ctx.lineTo(30, 2);
+            ctx.lineTo(45, 12);
+            ctx.lineTo(65, -10); // Sayap kanan luar
             ctx.closePath();
             ctx.fill();
             
-            // 4 Buah Mesin Propeller Musuh
-            ctx.fillStyle = '#8d99ae';
-            ctx.fillRect(-45, -25, 8, 20);
-            ctx.fillRect(-20, -25, 8, 20);
-            ctx.fillRect(12, -25, 8, 20);
-            ctx.fillRect(37, -25, 8, 20);
-
-            // Badan Boss
-            ctx.fillStyle = '#1d1e2c';
+            // Detail Garis Panel Geometris Merah Neon (High-tech)
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 1.5;
+            ctx.shadowColor = '#ef4444';
+            ctx.shadowBlur = 6;
             ctx.beginPath();
-            ctx.moveTo(0, 50);
-            ctx.lineTo(25, -40);
-            ctx.lineTo(-25, -40);
-            ctx.closePath();
-            ctx.fill();
+            ctx.moveTo(-40, -5); ctx.lineTo(-15, -20); ctx.lineTo(15, -20); ctx.lineTo(40, -5);
+            ctx.moveTo(-25, 0); ctx.lineTo(-10, -10); ctx.lineTo(10, -10); ctx.lineTo(25, 0);
+            ctx.stroke();
+            ctx.shadowBlur = 0; // Reset
             
-            // Aksen Sayap Merah Menyala
-            ctx.fillStyle = '#ef233c';
-            ctx.fillRect(-55, -8, 12, 4);
-            ctx.fillRect(43, -8, 12, 4);
+            // 4 Buah Pendorong Jet Siluman Tersembunyi di Punggung Pesawat (Mengarah ke Atas/Maju)
+            const bFlameHt = 8 + Math.random() * 10;
+            [-32, -18, 14, 28].forEach(ex => {
+                let fGrad = ctx.createLinearGradient(ex, -22, ex, -22 - bFlameHt);
+                fGrad.addColorStop(0, '#ef4444');
+                fGrad.addColorStop(1, 'transparent');
+                ctx.fillStyle = fGrad;
+                ctx.fillRect(ex, -26, 4, bFlameHt);
+            });
             
-            // Jendela Kokpit Merah Komandan
+            // Jendela Kokpit Merah Neon Komandan
             ctx.fillStyle = '#d90429';
             ctx.beginPath();
-            ctx.arc(0, -15, 10, Math.PI, 0);
+            ctx.ellipse(0, -22, 5, 8, 0, 0, Math.PI * 2);
             ctx.fill();
             
             // Menggambar Bar Nyawa Boss di atas badannya sendiri
@@ -979,9 +1547,21 @@ class Enemy {
             spawnExplosion(this.x, this.y, '#ff4c00', pCount, pSize);
             spawnExplosion(this.x, this.y, '#ffcc00', pCount * 0.7, pSize - 1);
             
-            // Teks skor melayang
-            spawnFloatingText(this.x, this.y, `+${this.points}`,
-                this.type === 'boss' ? '#ffd700' : '#ffffff');
+            // Tambah Combo Multiplier & Hyper Charge
+            player.comboCount++;
+            player.comboTimer = 2.5; // Combo aktif selama 2.5 detik
+            
+            let hyperGain = 2.5;
+            if (this.type === 'medium') hyperGain = 6.0;
+            if (this.type === 'boss') hyperGain = 15.0;
+            player.hyperCharge = Math.min(100, player.hyperCharge + hyperGain);
+            
+            const earnedPoints = this.points * player.comboCount;
+            
+            // Teks skor melayang dengan combo
+            const scoreColor = player.comboCount > 1 ? '#ffd700' : '#ffffff';
+            const scoreText = player.comboCount > 1 ? `+${earnedPoints} (x${player.comboCount})` : `+${earnedPoints}`;
+            spawnFloatingText(this.x, this.y, scoreText, scoreColor);
             
             // Hitstop & screen shake saat kill
             if (this.type === 'boss') {
@@ -993,7 +1573,7 @@ class Enemy {
             }
             
             // Dapatkan skor
-            score += this.points;
+            score += earnedPoints;
             updateHUD();
             
             // Peluang menjatuhkan Power-up
@@ -1021,7 +1601,7 @@ class PowerUp {
     constructor(x, y, type) {
         this.x = x;
         this.y = y;
-        this.type = type; // 'weapon', 'health', 'shield'
+        this.type = type; // 'weapon_spread', 'weapon_laser', 'weapon_missile', 'weapon_plasma', 'health', 'shield'
         this.width = 25;
         this.height = 25;
         this.speed = 1.5;
@@ -1041,9 +1621,18 @@ class PowerUp {
         let color = '#fff';
         let symbol = '?';
         
-        if (this.type === 'weapon') {
+        if (this.type === 'weapon_spread') {
             color = '#00f3ff';
             symbol = 'W';
+        } else if (this.type === 'weapon_laser') {
+            color = '#ff0055';
+            symbol = 'L';
+        } else if (this.type === 'weapon_missile') {
+            color = '#39ff14';
+            symbol = 'M';
+        } else if (this.type === 'weapon_plasma') {
+            color = '#b026ff';
+            symbol = 'P';
         } else if (this.type === 'health') {
             color = '#39ff14';
             symbol = 'H';
@@ -1072,11 +1661,15 @@ const powerUps = [];
 
 function spawnPowerUp(x, y) {
     const rand = Math.random();
-    let type = 'weapon';
-    if (rand < 0.35) {
+    let type = 'health';
+    
+    if (rand < 0.20) {
         type = 'health';
-    } else if (rand < 0.70) {
+    } else if (rand < 0.40) {
         type = 'shield';
+    } else {
+        const wTypes = ['weapon_spread', 'weapon_laser', 'weapon_missile', 'weapon_plasma'];
+        type = wTypes[Math.floor(Math.random() * wTypes.length)];
     }
     powerUps.push(new PowerUp(x, y, type));
 }
@@ -1151,9 +1744,39 @@ function checkCollisions() {
                 bullet.y + bullet.height / 2 > enemy.y - enemy.height / 2 &&
                 bullet.y - bullet.height / 2 < enemy.y + enemy.height / 2
             ) {
-                // Tabrakan terjadi!
+                // Penanganan Laser (Piercing: tembus musuh)
+                if (bullet.type === 'laser') {
+                    bullet.hitEnemies = bullet.hitEnemies || [];
+                    if (bullet.hitEnemies.includes(enemy)) {
+                        continue; // Lewati musuh yang sudah terkena peluru laser ini
+                    }
+                    bullet.hitEnemies.push(enemy);
+                    const isDestroyed = enemy.takeDamage(bullet.damage);
+                    if (isDestroyed) {
+                        enemies.splice(eIdx, 1);
+                    }
+                    continue; // Peluru laser tidak musnah
+                }
+
+                // Penanganan Plasma (AoE Explosion)
+                if (bullet.type === 'plasma') {
+                    // Berikan damage area ke musuh lain di sekitarnya
+                    enemies.forEach(e => {
+                        if (e !== enemy) {
+                            const dist = Math.hypot(e.x - bullet.x, e.y - bullet.y);
+                            if (dist <= bullet.splashRadius) {
+                                e.takeDamage(bullet.damage * 0.7); // 70% damage splash
+                            }
+                        }
+                    });
+                    // Efek partikel ledakan plasma besar
+                    spawnExplosion(bullet.x, bullet.y, '#b026ff', 24, 6);
+                }
+
+                // Peluru hancur setelah benturan (non-laser)
                 bullets.splice(bIdx, 1);
-                const isDestroyed = enemy.takeDamage(10); // Tiap peluru memberikan damage 10
+                
+                const isDestroyed = enemy.takeDamage(bullet.damage);
                 if (isDestroyed) {
                     enemies.splice(eIdx, 1);
                 }
@@ -1190,7 +1813,6 @@ function checkCollisions() {
             player.takeDamage(enemy.type === 'boss' ? 50 : 30);
             
             if (enemy.type !== 'boss') {
-                // Musuh biasa hancur langsung
                 const isDestroyed = enemy.takeDamage(999);
                 if (isDestroyed) {
                     enemies.splice(eIdx, 1);
@@ -1210,12 +1832,22 @@ function checkCollisions() {
         ) {
             playSound('powerup');
             
-            if (p.type === 'weapon') {
-                player.weaponLevel = Math.min(3, player.weaponLevel + 1);
+            if (p.type.startsWith('weapon_')) {
+                const wType = p.type.replace('weapon_', '');
+                if (player.weaponType === wType) {
+                    player.weaponLevel = Math.min(3, player.weaponLevel + 1);
+                    spawnFloatingText(player.x, player.y - 30, `LV. ${player.weaponLevel} UP!`, '#00f3ff');
+                } else {
+                    player.weaponType = wType;
+                    player.weaponLevel = 1;
+                    spawnFloatingText(player.x, player.y - 30, `${wType.toUpperCase()}!`, '#ffaa00');
+                }
             } else if (p.type === 'health') {
                 player.health = Math.min(player.maxHealth, player.health + 30);
+                spawnFloatingText(player.x, player.y - 30, '+30 HP', '#39ff14');
             } else if (p.type === 'shield') {
                 player.shield = 100;
+                spawnFloatingText(player.x, player.y - 30, 'SHIELD MAX', '#ffd700');
             }
             
             powerUps.splice(pIdx, 1);
@@ -1270,7 +1902,21 @@ function gameLoop(time) {
         
         updateSpawning(dt);
         updateParticles(dt);
+        updateVaporTrails(dt);
         checkCollisions();
+        
+        // Update Shockwave
+        if (ultimateShockwave) {
+            ultimateShockwave.radius += ultimateShockwave.speed * dt * 60;
+            if (ultimateShockwave.radius >= ultimateShockwave.maxRadius) {
+                ultimateShockwave = null;
+            }
+        }
+        
+        // Update screen invert duration
+        if (screenInvertFlash > 0) {
+            screenInvertFlash -= dt;
+        }
     }
     
     // Floating text tetap diupdate agar muncul saat hitstop
@@ -1298,6 +1944,8 @@ function gameLoop(time) {
     }
     
     drawBackground();
+    drawEntityShadows();
+    drawVaporTrails();
     
     // Gambar Peluru & Musuh & Powerup
     bullets.forEach(b => b.draw());
@@ -1306,13 +1954,52 @@ function gameLoop(time) {
     
     player.draw();
     drawParticles();
+    
+    // Gambar Ultimate Shockwave Ring
+    if (ultimateShockwave) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 170, 0, 0.8)';
+        ctx.lineWidth = 6;
+        ctx.shadowColor = '#ff5500';
+        ctx.shadowBlur = 20;
+        ctx.beginPath();
+        ctx.arc(ultimateShockwave.x, ultimateShockwave.y, ultimateShockwave.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+    }
+    
     drawFloatingTexts();
     
     ctx.restore();
     
+    // Efek inversi warna layar Mega Bomb
+    if (screenInvertFlash > 0) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.globalCompositeOperation = 'difference';
+        ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+        ctx.restore();
+    }
+    
     // Sinkronisasi Bar UI HUD secara berkala
     document.getElementById('health-bar').style.width = `${(player.health / player.maxHealth) * 100}%`;
     document.getElementById('shield-bar').style.width = `${player.shield}%`;
+    document.getElementById('hyper-bar').style.width = `${player.hyperCharge}%`;
+    
+    const isHyperReady = player.hyperCharge >= 100;
+    document.getElementById('hyper-bar').classList.toggle('ready', isHyperReady);
+    document.getElementById('hyper-label').classList.toggle('ready', isHyperReady);
+    document.getElementById('hyper-label').textContent = isHyperReady ? 'HYPER READY! [SHIFT]' : 'HYPER DRIVE [SHIFT]';
+    
+    document.getElementById('weapon-val').textContent = `${player.weaponType.toUpperCase()} (LV. ${player.weaponLevel})`;
+    
+    const comboEl = document.getElementById('combo-container');
+    if (player.comboCount > 1) {
+        comboEl.classList.remove('hidden');
+        document.getElementById('combo-val').textContent = `x${player.comboCount}`;
+    } else {
+        comboEl.classList.add('hidden');
+    }
     
     requestAnimationFrame(gameLoop);
 }
@@ -1346,6 +2033,14 @@ function startGame() {
     player.health = player.maxHealth;
     player.shield = 0;
     player.weaponLevel = 1;
+    player.weaponType = 'spread';
+    player.hyperCharge = 0;
+    player.comboCount = 0;
+    player.comboTimer = 0;
+    player.rollAngle = 0;
+    player.targetRoll = 0;
+    screenInvertFlash = 0;
+    ultimateShockwave = null;
     player.invincible = 0;
     player.hitFlashTimer = 0;
     player.x = GAME_WIDTH / 2;
@@ -1385,6 +2080,56 @@ function victory() {
     document.getElementById('victory-score').textContent = score;
     document.getElementById('victory-screen').classList.remove('hidden');
 }
+
+// --- ULTIMATE MEGA BOMB SYSTEM ---
+function triggerUltimate() {
+    if (player.hyperCharge < 100) return;
+    
+    player.hyperCharge = 0;
+    playSound('ultimate');
+    
+    // Set status shockwave
+    ultimateShockwave = {
+        x: player.x,
+        y: player.y,
+        radius: 10,
+        maxRadius: 600,
+        speed: 12
+    };
+    
+    // Guncangan layar & hitstop masif
+    screenShake = 35;
+    hitstop = 0.4;
+    screenInvertFlash = 0.25; // Durasi efek inversi warna
+    
+    // Hapus seluruh peluru musuh
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        if (!bullets[i].isPlayerOwned) {
+            spawnExplosion(bullets[i].x, bullets[i].y, '#ffffff', 4, 2);
+            bullets.splice(i, 1);
+        }
+    }
+    
+    // Berikan damage besar ke semua musuh aktif
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        if (e.y > -20 && e.y < GAME_HEIGHT) {
+            const isDestroyed = e.takeDamage(120);
+            if (isDestroyed) {
+                enemies.splice(i, 1);
+            }
+        }
+    }
+    
+    spawnFloatingText(player.x, player.y - 45, "MEGA SHOCKWAVE BOMB!", '#ffaa00');
+}
+
+// Handler klik pada container Hyper HUD untuk mobile/desktop tap
+document.getElementById('hyper-container').addEventListener('click', () => {
+    if (gameState === 'PLAY') {
+        triggerUltimate();
+    }
+});
 
 // --- INTERACTIVE EVENTS ---
 document.getElementById('btn-play').addEventListener('click', () => {

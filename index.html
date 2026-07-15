@@ -3,6 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0a0e17">
+    <meta name="description" content="Vertical-scrolling shoot'em up arcade game retro futuristik.">
+    <link rel="manifest" href="./manifest.json">
+    <link rel="icon" type="image/svg+xml" href="./icon.svg">
+    <link rel="apple-touch-icon" href="./icon.svg">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="1945 Airforce">
     <title>1945 Airforce - Retro Arcade Shooter</title>
     <link rel="stylesheet" href="style.css">
     <!-- Google Fonts for Retro and Modern look -->
@@ -22,6 +30,23 @@
                 <span id="score-val">000000</span>
             </div>
             
+            <div class="hud-item" id="level-container">
+                <span id="stage-val">STAGE 1</span>
+                <div id="combo-container" class="hidden"><span id="combo-val">x1</span> COMBO</div>
+            </div>
+            
+            <div class="hud-item" id="weapon-container">
+                <span class="hud-label">WEAPON TYPE</span>
+                <span id="weapon-val" class="text-glow">BASIC</span>
+            </div>
+
+            <div class="hud-item" id="hyper-container">
+                <span class="hud-label" id="hyper-label">HYPER DRIVE [SHIFT]</span>
+                <div class="bar-outer">
+                    <div id="hyper-bar" class="bar-inner"></div>
+                </div>
+            </div>
+
             <div class="hud-item" id="health-container">
                 <span class="hud-label">HEALTH</span>
                 <div class="bar-outer">
@@ -34,10 +59,6 @@
                 <div class="bar-outer">
                     <div id="shield-bar" class="bar-inner"></div>
                 </div>
-            </div>
-
-            <div class="hud-item" id="level-container">
-                <span id="stage-val">STAGE 1</span>
             </div>
         </div>
 
@@ -67,6 +88,7 @@
                     <p><strong>KONTROL:</strong></p>
                     <p>🖱️ Seret Mouse / Sentuh Layar untuk bergerak (Tembak Otomatis)</p>
                     <p>⌨️ WASD / Tombol Arah untuk bergerak + SPACE untuk menembak</p>
+                    <p>⚡ Tekan <strong>SHIFT</strong> / <strong>SPACE</strong> untuk <strong>MEGA BOMB</strong> (saat HYPER 100%)</p>
                 </div>
             </div>
         </div>
@@ -96,5 +118,20 @@
 
     <!-- Script File -->
     <script src="game.js"></script>
+
+    <!-- Registrasi Service Worker untuk PWA (offline) -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then((reg) => {
+                        console.log('Service Worker terdaftar:', reg.scope);
+                    })
+                    .catch((err) => {
+                        console.warn('Service Worker gagal terdaftar:', err);
+                    });
+            });
+        }
+    </script>
 </body>
 </html>

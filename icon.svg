@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+    <defs>
+        <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#0f2038"/>
+            <stop offset="1" stop-color="#0a0e17"/>
+        </linearGradient>
+        <linearGradient id="flameGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#ffd700"/>
+            <stop offset="0.5" stop-color="#ff4500"/>
+            <stop offset="1" stop-color="#ff4500" stop-opacity="0"/>
+        </linearGradient>
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="8" result="blur"/>
+            <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        </filter>
+    </defs>
+
+    <!-- Background -->
+    <rect width="512" height="512" rx="96" fill="url(#bgGrad)"/>
+
+    <!-- Engine flame -->
+    <path d="M 232 350 L 256 440 L 280 350 Z" fill="url(#flameGrad)"/>
+
+    <!-- Main wings -->
+    <path d="M 140 270 L 372 270 L 352 300 L 160 300 Z" fill="#a6b0c3"/>
+    <rect x="150" y="274" width="30" height="10" fill="#ff0055"/>
+    <rect x="332" y="274" width="30" height="10" fill="#ff0055"/>
+
+    <!-- Body -->
+    <path d="M 256 150 L 288 260 L 288 340 L 224 340 L 224 260 Z" fill="#7e8a9f"/>
+
+    <!-- Tail wings -->
+    <path d="M 216 320 L 296 320 L 288 350 L 224 350 Z" fill="#68758b"/>
+
+    <!-- Cockpit -->
+    <ellipse cx="256" cy="240" rx="16" ry="34" fill="#00f3ff" filter="url(#glow)"/>
+    <ellipse cx="250" cy="228" rx="6" ry="16" fill="#ffffff" opacity="0.8"/>
+
+    <!-- Propeller -->
+    <line x1="206" y1="150" x2="306" y2="150" stroke="#ffffff" stroke-width="8" stroke-linecap="round" opacity="0.5"/>
+    <circle cx="256" cy="150" r="12" fill="#ffcc00"/>
+</svg>

@@ -337,6 +337,48 @@ canvas {
     box-shadow: 0 0 5px var(--neon-blue);
 }
 
+#hyper-bar {
+    background: var(--neon-gold);
+    box-shadow: 0 0 5px var(--neon-gold);
+    width: 0%;
+}
+
+#hyper-bar.ready {
+    background: #ff7b00;
+    box-shadow: 0 0 10px #ff7b00, 0 0 20px var(--neon-gold);
+    animation: hyper-ready-flash 0.4s infinite alternate;
+}
+
+#hyper-label.ready {
+    color: var(--neon-gold);
+    text-shadow: 0 0 8px var(--neon-gold);
+    animation: pulse 0.8s infinite ease-in-out alternate;
+}
+
+#weapon-val {
+    font-size: 0.75rem;
+    font-weight: bold;
+}
+
+#combo-container {
+    margin-top: 6px;
+    font-size: 0.6rem;
+    color: var(--neon-gold);
+    text-shadow: 0 0 6px var(--neon-gold);
+    animation: pulse 0.4s infinite ease-in-out alternate;
+}
+
+#combo-val {
+    font-size: 0.8rem;
+    font-weight: bold;
+}
+
+@keyframes hyper-ready-flash {
+    0% { filter: brightness(0.8) contrast(1); }
+    100% { filter: brightness(1.6) contrast(1.2); }
+}
+
+
 /* Control Icon (Audio) */
 .control-icon {
     position: absolute;
